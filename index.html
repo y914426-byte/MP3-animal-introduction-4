@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的离线音乐播放器</title>
+    <!-- 引入 Tailwind CSS 进行样式设计 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 FontAwesome 图标库 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 引入 QRCode.js 生成二维码 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        /* 自定义进度条样式 */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+        
+        /* 背景动画 */
+        .bg-animated {
+            background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* 玻璃拟态效果 */
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body class="bg-animated min-h-screen flex items-center justify-center text-white font-sans selection:bg-pink-500 selection:text-white">
+
+    <!-- 主播放器容器 -->
+    <div class="glass p-8 rounded-3xl shadow-2xl w-full max-w-md mx-4 relative overflow-hidden">
+        
+        <!-- 音频可视化 Canvas -->
+        <canvas id="visualizer" class="absolute bottom-0 left-0 w-full h-1/2 opacity-30 pointer-events-none"></canvas>
+
+        <!-- 顶部：当前播放信息 -->
+        <div class="relative z-10 text-center mb-8">
+            <div class="w-32 h-32 mx-auto bg-gradient-to-tr from-pink-500 to-violet-500 rounded-full shadow-lg flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]" style="animation-play-state: paused;" id="album-art">
+                <i class="fa-solid fa-music text-4xl text-white"></i>
+            </div>
+            <h2 id="track-name" class="text-2xl font-bold truncate px-4">内置演示音频</h2>
+            <p id="track-artist" class="text-gray-300 text-sm mt-1">本地播放器</p>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="relative z-10 mb-6">
+            <div class="flex justify-between text-xs text-gray-300 mb-1">
+                <span id="current-time">0:00</span>
+                <span id="duration">0:00</span>
+            </div>
+            <input type="range" id="progress" value="0" class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <!-- 控制按钮 -->
+        <div class="relative z-10 flex items-center justify-center gap-8 mb-6">
+            <!-- 导入文件按钮 -->
+            <button onclick="document.getElementById('file-upload').click()" class="text-gray-300 hover:text-white transition transform hover:scale-110" title="导入本地 MP3">
+                <i class="fa-solid fa-folder-open text-xl"></i>
+            </button>
+            <input type="file" id="file-upload" accept="audio/*" class="hidden">
+
+            <!-- 播放/暂停 -->
+            <button id="play-btn" class="w-16 h-16 bg-white text-pink-600 rounded-full flex items-center justify-center shadow-lg hover:bg-gray-100 transition transform hover:scale-105 active:scale-95">
+                <i class="fa-solid fa-play text-2xl ml-1" id="play-icon"></i>
+            </button>
+
+            <!-- 重新开始 -->
+            <button id="restart-btn" class="text-gray-300 hover:text-white transition transform hover:scale-110">
+                <i class="fa-solid fa-rotate-right text-xl"></i>
+            </button>
+        </div>
+
+        <!-- 分享和二维码按钮 -->
+        <div class="relative z-10 flex items-center justify-center gap-4 mb-6">
+            <button id="share-btn" class="flex-1 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white py-2 px-4 rounded-lg transition transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                <i class="fa-solid fa-share-nodes mr-2"></i>生成分享链接
+            </button>
+            <button id="qrcode-btn" class="flex-1 bg-gradient-to-r from-pink-500 to-orange-500 hover:from-pink-600 hover:to-orange-600 text-white py-2 px-4 rounded-lg transition transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                <i class="fa-solid fa-qrcode mr-2"></i>生成二维码
+            </button>
+        </div>
+
+        <!-- 音量控制 -->
+        <div class="relative z-10 flex items-center justify-center gap-3 px-8">
+            <i class="fa-solid fa-volume-low text-gray-300 text-xs"></i>
+            <input type="range" id="volume" min="0" max="1" step="0.1" value="0.8" class="w-full">
+            <i class="fa-solid fa-volume-high text-gray-300 text-xs"></i>
+        </div>
+    </div>
+
+    <!-- 二维码弹窗 -->
+    <div id="qrcode-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="glass p-8 rounded-3xl shadow-2xl max-w-sm mx-4 relative">
+            <button id="close-modal" class="absolute top-4 right-4 text-white hover:text-gray-300 transition">
+                <i class="fa-solid fa-xmark text-2xl"></i>
+            </button>
+            <h3 class="text-2xl font-bold text-center mb-4">扫码播放音频</h3>
+            <div id="qrcode-container" class="bg-white p-4 rounded-lg mb-4 flex items-center justify-center"></div>
+            <p class="text-sm text-center text-gray-300 mb-4">使用微信或其他扫码工具扫描二维码</p>
+            <button id="copy-link-btn" class="w-full bg-white text-pink-600 py-2 px-4 rounded-lg hover:bg-gray-100 transition">
+                <i class="fa-solid fa-copy mr-2"></i>复制链接
+            </button>
+        </div>
+    </div>
+
+    <!-- 这里的 Base64 音频是一个简短的提示音,作为默认演示内容 -->
+    <!-- 真实场景下,长 MP3 转换成 Base64 会导致 HTML 文件过大,建议使用下方的文件上传功能 -->
+    <audio id="audio-player" crossorigin="anonymous">
+        <source src="data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA//////////////////////////////////////////////////////////////////8AAAA9TEFNRTMuMTAwA78AAAAAAAAAABQkJAAACAAAAnEAAq1VAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//uQxAAACkQNgAAABAAACExHAAAALSw0QAAAAEAAITDcAAAARAAAqAAAEAAQBAJAAgCAQAA//7kMQAAAp0DUAAAAQAAAhMRwAAAC0sNQAAAAEAAITDcAAAARAAACgAAQABAEAkACAIBAAD/+5DEAAAKZA1AAAAEAAITDcAAAAtLDUAAAABAACEw3AAABEAAAKAAABAEAkACAIBAAD" type="audio/mp3">
+    </audio>
+
+    <script>
+        // DOM 元素获取
+        const audio = document.getElementById('audio-player');
+        const playBtn = document.getElementById('play-btn');
+        const playIcon = document.getElementById('play-icon');
+        const progress = document.getElementById('progress');
+        const volume = document.getElementById('volume');
+        const currentTimeEl = document.getElementById('current-time');
+        const durationEl = document.getElementById('duration');
+        const fileUpload = document.getElementById('file-upload');
+        const trackName = document.getElementById('track-name');
+        const trackArtist = document.getElementById('track-artist');
+        const albumArt = document.getElementById('album-art');
+        const restartBtn = document.getElementById('restart-btn');
+        const shareBtn = document.getElementById('share-btn');
+        const qrcodeBtn = document.getElementById('qrcode-btn');
+        const qrcodeModal = document.getElementById('qrcode-modal');
+        const closeModal = document.getElementById('close-modal');
+        const qrcodeContainer = document.getElementById('qrcode-container');
+        const copyLinkBtn = document.getElementById('copy-link-btn');
+
+        // 存储当前音频数据
+        let currentAudioData = null;
+        let currentFileName = '内置演示音频';
+        let shareUrl = '';
+
+        // 音频上下文 (用于可视化)
+        let audioContext;
+        let analyser;
+        let source;
+        let isContextSetup = false;
+
+        // 初始化可视化效果
+        function setupAudioContext() {
+            if (isContextSetup) return;
+            
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                source = audioContext.createMediaElementSource(audio);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+                analyser.fftSize = 256;
+                isContextSetup = true;
+                drawVisualizer();
+            } catch (e) {
+                console.log("Audio Context blocked until user interaction");
+            }
+        }
+
+        // 播放/暂停逻辑
+        playBtn.addEventListener('click', () => {
+            setupAudioContext();
+            
+            // 恢复 AudioContext (浏览器策略要求用户交互后才能恢复)
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            if (audio.paused) {
+                audio.play();
+                updatePlayIcon(true);
+                albumArt.style.animationPlayState = 'running';
+            } else {
+                audio.pause();
+                updatePlayIcon(false);
+                albumArt.style.animationPlayState = 'paused';
+            }
+        });
+
+        function updatePlayIcon(isPlaying) {
+            if (isPlaying) {
+                playIcon.classList.remove('fa-play');
+                playIcon.classList.add('fa-pause');
+            } else {
+                playIcon.classList.remove('fa-pause');
+                playIcon.classList.add('fa-play');
+            }
+        }
+
+        // 处理文件上传
+        fileUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                // 检查文件大小(建议小于 5MB 用于分享)
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                if (file.size > maxSize) {
+                    alert('文件过大!建议上传小于 5MB 的音频文件以便生成分享链接。');
+                }
+
+                // 读取文件为 Base64
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    currentAudioData = event.target.result;
+                    currentFileName = file.name.replace(/\.[^/.]+$/, "");
+                    
+                    // 创建本地 URL
+                    const fileURL = URL.createObjectURL(file);
+                    audio.src = fileURL;
+                    
+                    // 更新 UI 信息
+                    trackName.textContent = currentFileName;
+                    trackArtist.textContent = "本地导入";
+                    
+                    // 启用分享按钮
+                    shareBtn.disabled = false;
+                    qrcodeBtn.disabled = false;
+                    
+                    // 重置状态
+                    audio.load();
+                    setupAudioContext();
+                    if (audioContext) audioContext.resume();
+                    
+                    // 自动播放
+                    audio.play()
+                        .then(() => {
+                            updatePlayIcon(true);
+                            albumArt.style.animationPlayState = 'running';
+                        })
+                        .catch(err => console.error("播放失败:", err));
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 重新播放
+        restartBtn.addEventListener('click', () => {
+            audio.currentTime = 0;
+            if (audio.paused) {
+                audio.play();
+                updatePlayIcon(true);
+                albumArt.style.animationPlayState = 'running';
+            }
+        });
+
+        // 进度条更新
+        audio.addEventListener('timeupdate', () => {
+            const percent = (audio.currentTime / audio.duration) * 100;
+            progress.value = percent || 0;
+            currentTimeEl.textContent = formatTime(audio.currentTime);
+            if (!isNaN(audio.duration)) {
+                durationEl.textContent = formatTime(audio.duration);
+            }
+            // 更新进度条背景色以显示进度
+            const val = progress.value;
+            progress.style.background = `linear-gradient(to right, #ffffff 0%, #ffffff ${val}%, rgba(255,255,255,0.3) ${val}%, rgba(255,255,255,0.3) 100%)`;
+        });
+
+        // 拖动进度条
+        progress.addEventListener('input', (e) => {
+            const time = (e.target.value / 100) * audio.duration;
+            audio.currentTime = time;
+        });
+
+        // 音量控制
+        volume.addEventListener('input', (e) => {
+            audio.volume = e.target.value;
+        });
+
+        // 音频加载完成
+        audio.addEventListener('loadedmetadata', () => {
+            durationEl.textContent = formatTime(audio.duration);
+        });
+
+        // 播放结束
+        audio.addEventListener('ended', () => {
+            updatePlayIcon(false);
+            progress.value = 0;
+            albumArt.style.animationPlayState = 'paused';
+        });
+
+        // 格式化时间
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        }
+
+        // 生成分享链接
+        shareBtn.addEventListener('click', () => {
+            if (!currentAudioData) {
+                alert('请先导入音频文件!');
+                return;
+            }
+
+            // 生成包含音频数据的 URL
+            const params = new URLSearchParams({
+                audio: currentAudioData,
+                name: currentFileName
+            });
+            shareUrl = window.location.origin + window.location.pathname + '?' + params.toString();
+            
+            // 复制到剪贴板
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                shareBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>链接已复制!';
+                setTimeout(() => {
+                    shareBtn.innerHTML = '<i class="fa-solid fa-share-nodes mr-2"></i>生成分享链接';
+                }, 2000);
+            }).catch(() => {
+                alert('链接生成成功,请手动复制:\n' + shareUrl);
+            });
+        });
+
+        // 生成二维码
+        qrcodeBtn.addEventListener('click', () => {
+            if (!currentAudioData) {
+                alert('请先导入音频文件!');
+                return;
+            }
+
+            // 如果还没有生成分享链接,先生成
+            if (!shareUrl) {
+                const params = new URLSearchParams({
+                    audio: currentAudioData,
+                    name: currentFileName
+                });
+                shareUrl = window.location.origin + window.location.pathname + '?' + params.toString();
+            }
+
+            // 清空之前的二维码
+            qrcodeContainer.innerHTML = '';
+            
+            // 生成新二维码
+            new QRCode(qrcodeContainer, {
+                text: shareUrl,
+                width: 256,
+                height: 256,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+
+            // 显示弹窗
+            qrcodeModal.classList.remove('hidden');
+            qrcodeModal.classList.add('flex');
+        });
+
+        // 关闭弹窗
+        closeModal.addEventListener('click', () => {
+            qrcodeModal.classList.add('hidden');
+            qrcodeModal.classList.remove('flex');
+        });
+
+        // 点击背景关闭弹窗
+        qrcodeModal.addEventListener('click', (e) => {
+            if (e.target === qrcodeModal) {
+                qrcodeModal.classList.add('hidden');
+                qrcodeModal.classList.remove('flex');
+            }
+        });
+
+        // 复制链接
+        copyLinkBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                copyLinkBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>已复制!';
+                setTimeout(() => {
+                    copyLinkBtn.innerHTML = '<i class="fa-solid fa-copy mr-2"></i>复制链接';
+                }, 2000);
+            }).catch(() => {
+                alert('复制失败,请手动复制链接');
+            });
+        });
+
+        // 页面加载时检查 URL 参数
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const audioData = params.get('audio');
+            const audioName = params.get('name');
+
+            if (audioData && audioName) {
+                // 从 URL 加载音频
+                audio.src = audioData;
+                trackName.textContent = audioName;
+                trackArtist.textContent = "分享的音频";
+                
+                // 加载音频
+                audio.load();
+                setupAudioContext();
+                
+                // 提示用户可以播放
+                alert('已加载分享的音频,点击播放按钮开始播放!');
+            }
+        });
+
+        // 绘制可视化效果
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+        
+        function drawVisualizer() {
+            if (!analyser) return;
+
+            requestAnimationFrame(drawVisualizer);
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+
+            // 适配 Canvas 尺寸
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            const WIDTH = canvas.width;
+            const HEIGHT = canvas.height;
+
+            canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+            const barWidth = (WIDTH / bufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                barHeight = dataArray[i] / 2; // 缩放高度
+
+                // 绘制柱状图,颜色为半透明白
+                canvasCtx.fillStyle = `rgba(255, 255, 255, ${dataArray[i]/255})`;
+                canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+
+                x += barWidth + 1;
+            }
+        }
+    </script>
+</body>
+</html>
